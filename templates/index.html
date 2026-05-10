@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>JSON Comparison Tool</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f2f5;color:#222}
+  header{background:#1f4e79;color:#fff;padding:16px 28px;display:flex;align-items:center;gap:12px}
+  header h1{font-size:1.3rem;font-weight:600}
+  .badge{background:#2e75b6;border-radius:4px;padding:2px 8px;font-size:.75rem}
+  .main{display:grid;grid-template-columns:320px 1fr;gap:0;min-height:calc(100vh - 56px)}
+
+  /* Sidebar */
+  .sidebar{background:#fff;border-right:1px solid #dde;padding:20px;overflow-y:auto}
+  .sidebar h2{font-size:.85rem;text-transform:uppercase;color:#555;letter-spacing:.06em;margin-bottom:12px}
+  .form-group{margin-bottom:12px}
+  label{display:block;font-size:.78rem;font-weight:600;color:#444;margin-bottom:4px}
+  input{width:100%;padding:7px 10px;border:1px solid #ccc;border-radius:4px;font-size:.85rem}
+  input:focus{outline:none;border-color:#2e75b6;box-shadow:0 0 0 2px #cce4f6}
+  .section-divider{border:none;border-top:1px solid #eee;margin:16px 0}
+  .btn{display:block;width:100%;padding:9px;border:none;border-radius:4px;font-size:.88rem;
+       font-weight:600;cursor:pointer;margin-top:8px;transition:background .15s}
+  .btn-primary{background:#1f4e79;color:#fff}
+  .btn-primary:hover{background:#1a3f60}
+  .btn-primary:disabled{background:#888;cursor:not-allowed}
+  .btn-success{background:#196a36;color:#fff}
+  .btn-success:hover{background:#145629}
+  .btn-success:disabled{background:#888;cursor:not-allowed}
+
+  /* Content */
+  .content{padding:20px;overflow:auto}
+  .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .stat-chip{background:#e8f0fe;border:1px solid #b3c9f5;border-radius:20px;
+             padding:4px 12px;font-size:.78rem;color:#1f4e79;font-weight:600}
+  .stat-chip.diff{background:#fde8e8;border-color:#f5b3b3;color:#8b0000}
+  .filter-input{padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:.82rem;width:220px}
+
+  /* Table */
+  .table-wrap{overflow-x:auto;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  table{width:100%;border-collapse:collapse;background:#fff;font-size:.82rem}
+  th{background:#1f4e79;color:#fff;padding:9px 12px;text-align:left;white-space:nowrap;position:sticky;top:0}
+  td{padding:7px 12px;border-bottom:1px solid #eee;vertical-align:top}
+  tr:hover td{background:#f5f8ff}
+  .tag{display:inline-block;border-radius:3px;padding:1px 7px;font-size:.72rem;font-weight:700}
+  .tag-added   {background:#c6efce;color:#276221}
+  .tag-removed {background:#ffc7ce;color:#8b0000}
+  .tag-changed {background:#ffeb9c;color:#7d5800}
+  .tag-ok      {background:#e2f3e2;color:#276221}
+  .diff-block{margin-bottom:6px;padding:6px 8px;border-radius:4px;border-left:3px solid #ccc;background:#fafafa}
+  .diff-block.added  {border-color:#4caf50;background:#f0fff0}
+  .diff-block.removed{border-color:#f44336;background:#fff0f0}
+  .diff-block.changed{border-color:#ff9800;background:#fffbe6}
+  .diff-path{font-family:monospace;font-size:.78rem;font-weight:700;color:#444;margin-bottom:3px}
+  .diff-vals{display:flex;gap:8px;flex-wrap:wrap}
+  .val-old{background:#ffd7d7;padding:1px 6px;border-radius:3px;font-family:monospace;font-size:.75rem;max-width:280px;word-break:break-all}
+  .val-new{background:#d7ffd7;padding:1px 6px;border-radius:3px;font-family:monospace;font-size:.75rem;max-width:280px;word-break:break-all}
+  .no-diff{color:#4caf50;font-size:.78rem}
+  .empty-state{text-align:center;padding:60px 20px;color:#888}
+  .error-msg{background:#fde8e8;border:1px solid #f5c6c6;border-radius:4px;padding:12px;
+             color:#8b0000;font-size:.85rem;margin-bottom:16px}
+  .loading{text-align:center;padding:40px;color:#555;font-size:.9rem}
+  .expand-btn{background:none;border:none;color:#2e75b6;cursor:pointer;font-size:.78rem;padding:0;text-decoration:underline}
+  .collapsed .diff-list{display:none}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>JSON Comparison Tool</h1>
+  <span class="badge">Oracle DB</span>
+</header>
+
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <h2>DB Connection</h2>
+    <div class="form-group"><label>Host</label><input id="host" placeholder="db.host.com"/></div>
+    <div class="form-group"><label>Port</label><input id="port" value="1521"/></div>
+    <div class="form-group"><label>Service Name / SID</label><input id="service" placeholder="ORCL"/></div>
+    <div class="form-group"><label>Username</label><input id="username"/></div>
+    <div class="form-group"><label>Password</label><input id="password" type="password"/></div>
+
+    <hr class="section-divider"/>
+    <h2>Date &amp; Time Range</h2>
+    <div class="form-group">
+      <label>From</label>
+      <input id="date_from" type="datetime-local" step="1"/>
+    </div>
+    <div class="form-group">
+      <label>To</label>
+      <input id="date_to" type="datetime-local" step="1"/>
+    </div>
+
+    <button class="btn btn-primary" id="run-btn" onclick="runQuery()">Run Comparison</button>
+    <button class="btn btn-success" id="export-btn" onclick="exportExcel()" disabled>Export to Excel</button>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+    <div id="error-area"></div>
+    <div id="toolbar" class="toolbar" style="display:none">
+      <span class="stat-chip" id="stat-total"></span>
+      <span class="stat-chip diff" id="stat-diff"></span>
+      <input class="filter-input" id="filter-input" placeholder="Filter by ID, path, value..."
+             oninput="filterResults()"/>
+    </div>
+    <div id="results-area">
+      <div class="empty-state">
+        <div style="font-size:2rem;margin-bottom:8px">&#128269;</div>
+        Configure connection, set date range, then click <b>Run Comparison</b>.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let allResults = [];
+let configData = {};
+
+// Load config on page load
+fetch('/config').then(r=>r.json()).then(cfg=>{ configData = cfg; });
+
+function getDateStr(id){
+  const v = document.getElementById(id).value;
+  if(!v) return '';
+  return v.replace('T',' ') + (v.length===16 ? ':00' : '');
+}
+
+async function runQuery(){
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true; btn.textContent = 'Running...';
+  document.getElementById('error-area').innerHTML = '';
+  document.getElementById('results-area').innerHTML = '<div class="loading">Querying Oracle DB...</div>';
+  document.getElementById('toolbar').style.display = 'none';
+
+  const payload = {
+    host:      document.getElementById('host').value,
+    port:      document.getElementById('port').value,
+    service:   document.getElementById('service').value,
+    username:  document.getElementById('username').value,
+    password:  document.getElementById('password').value,
+    date_from: getDateStr('date_from'),
+    date_to:   getDateStr('date_to'),
+  };
+
+  try{
+    const res = await fetch('/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const data = await res.json();
+    if(data.status==='error') throw new Error(data.message);
+    allResults = data.data;
+    renderResults(allResults);
+    document.getElementById('export-btn').disabled = allResults.length===0;
+  }catch(e){
+    document.getElementById('error-area').innerHTML = `<div class="error-msg"><b>Error:</b> ${e.message}</div>`;
+    document.getElementById('results-area').innerHTML = '';
+  }finally{
+    btn.disabled = false; btn.textContent = 'Run Comparison';
+  }
+}
+
+function filterResults(){
+  const q = document.getElementById('filter-input').value.toLowerCase();
+  if(!q){ renderResults(allResults); return; }
+  const filtered = allResults.filter(r=>{
+    if(r.id.toLowerCase().includes(q)) return true;
+    if(r.dat_time.toLowerCase().includes(q)) return true;
+    if(Object.values(r.extra).some(v=>v.toLowerCase().includes(q))) return true;
+    return r.sets.some(s=>s.diffs.some(d=>
+      d.path.toLowerCase().includes(q)||
+      d.old.toLowerCase().includes(q)||
+      d.new.toLowerCase().includes(q)
+    ));
+  });
+  renderResults(filtered);
+}
+
+function renderResults(results){
+  const col = configData.columns || {};
+  const extraIds = col.extra_ids || [];
+
+  const totalDiff = results.reduce((n,r)=>n+(r.sets.some(s=>s.has_diff)?1:0),0);
+  document.getElementById('stat-total').textContent = `${results.length} records`;
+  document.getElementById('stat-diff').textContent  = `${totalDiff} with differences`;
+  document.getElementById('toolbar').style.display  = 'flex';
+
+  if(!results.length){
+    document.getElementById('results-area').innerHTML='<div class="empty-state">No records found for the selected range.</div>';
+    return;
+  }
+
+  let html = '<div class="table-wrap"><table><thead><tr>';
+  html += `<th>${col.primary_id||'ID'}</th>`;
+  extraIds.forEach(k=>{ html+=`<th>${k}</th>`; });
+  html += `<th>${col.datetime||'DateTime'}</th>`;
+  (col.json_sets||[]).forEach(s=>{ html+=`<th>${s.label} (${s.left} vs ${s.right})</th>`; });
+  html += '</tr></thead><tbody>';
+
+  results.forEach((rec,ri)=>{
+    html += '<tr>';
+    html += `<td><b>${esc(rec.id)}</b></td>`;
+    extraIds.forEach(k=>{ html+=`<td>${esc(rec.extra[k]||'')}</td>`; });
+    html += `<td style="white-space:nowrap">${esc(rec.dat_time)}</td>`;
+
+    rec.sets.forEach(s=>{
+      html += '<td>';
+      if(!s.has_diff){
+        html += `<span class="tag tag-ok">&#10003; Identical</span>`;
+      } else {
+        const id = `d${ri}_${s.label.replace(/\s/g,'')}`;
+        html += `<span class="tag tag-changed">${s.diffs.length} diff${s.diffs.length>1?'s':''}</span> `;
+        html += `<button class="expand-btn" onclick="toggleDiff('${id}')">show</button>`;
+        html += `<div id="${id}" style="display:none;margin-top:6px">`;
+        s.diffs.forEach(d=>{
+          html += `<div class="diff-block ${d.type}">`;
+          html += `<div class="diff-path">${esc(d.path)}</div>`;
+          html += `<div class="diff-vals">`;
+          if(d.type==='removed'||d.type==='changed')
+            html += `<span class="val-old">${esc(d.old)||'(empty)'}</span>`;
+          if(d.type==='added'||d.type==='changed')
+            html += `<span class="val-new">${esc(d.new)||'(empty)'}</span>`;
+          html += `</div></div>`;
+        });
+        html += '</div>';
+      }
+      html += '</td>';
+    });
+    html += '</tr>';
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('results-area').innerHTML = html;
+}
+
+function toggleDiff(id){
+  const el = document.getElementById(id);
+  const btn = el.previousElementSibling;
+  if(el.style.display==='none'){
+    el.style.display='block'; btn.textContent='hide';
+  } else {
+    el.style.display='none'; btn.textContent='show';
+  }
+}
+
+async function exportExcel(){
+  const btn = document.getElementById('export-btn');
+  btn.disabled=true; btn.textContent='Exporting...';
+  try{
+    const res = await fetch('/export',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({results:allResults})
+    });
+    if(!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = res.headers.get('Content-Disposition')?.match(/filename=(.+)/)?.[1] || 'json_diff.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  }catch(e){
+    document.getElementById('error-area').innerHTML=`<div class="error-msg"><b>Export Error:</b> ${e.message}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent='Export to Excel';
+  }
+}
+
+
+function esc(s){
+  if(s===null||s===undefined) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

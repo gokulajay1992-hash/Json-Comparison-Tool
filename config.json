@@ -1,0 +1,12 @@
+{
+  "table_name": "YOUR_TABLE_NAME",
+  "columns": {
+    "primary_id": "ID",
+    "datetime": "DatTime",
+    "extra_ids": ["id1", "id2", "id3"],
+    "json_sets": [
+      { "label": "Set 1", "left": "Json1", "right": "Json2" },
+      { "label": "Set 2", "left": "Json3", "right": "Json4" }
+    ]
+  }
+}
