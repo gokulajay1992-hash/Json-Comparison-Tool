@@ -1,23 +1,26 @@
-from flask import Flask, render_template, request, jsonify, send_file
+import streamlit as st
 import oracledb
 import json
 import io
-from datetime import datetime
+from datetime import datetime, date, time
 import openpyxl
 from openpyxl.styles import PatternFill, Font
 
-app = Flask(__name__)
+st.set_page_config(page_title="JSON Comparison Tool", layout="wide")
 
 # ---------------------------------------------------------------------------
-# Config loader
+# Config
 # ---------------------------------------------------------------------------
 
 def load_config():
-    with open("config.json", "r") as f:
+    with open("config.json") as f:
         return json.load(f)
 
+CFG = load_config()
+COL = CFG["columns"]
+
 # ---------------------------------------------------------------------------
-# Oracle helpers
+# Oracle
 # ---------------------------------------------------------------------------
 
 def get_connection(host, port, service, username, password):
@@ -25,16 +28,21 @@ def get_connection(host, port, service, username, password):
     return oracledb.connect(user=username, password=password, dsn=dsn)
 
 # ---------------------------------------------------------------------------
-# JSON diff engine (recursive, handles nested objects and arrays)
+# JSON diff engine
 # ---------------------------------------------------------------------------
+
+def _fmt(val):
+    if val is None:
+        return ""
+    if isinstance(val, (dict, list)):
+        return json.dumps(val)
+    return str(val)
 
 def deep_diff(a, b, path=""):
     diffs = []
-
     if type(a) != type(b):
         diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
         return diffs
-
     if isinstance(a, dict):
         for key in set(a) | set(b):
             p = f"{path}.{key}" if path else key
@@ -56,17 +64,7 @@ def deep_diff(a, b, path=""):
     else:
         if a != b:
             diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
-
     return diffs
-
-
-def _fmt(val):
-    if val is None:
-        return ""
-    if isinstance(val, (dict, list)):
-        return json.dumps(val)
-    return str(val)
-
 
 def parse_json(val):
     if val is None:
@@ -79,107 +77,79 @@ def parse_json(val):
     return val
 
 # ---------------------------------------------------------------------------
-# Routes
+# Query
 # ---------------------------------------------------------------------------
 
-@app.route("/")
-def index():
-    cfg = load_config()
-    return render_template("index.html", config=cfg)
+def run_query(host, port, service, username, password, date_from, date_to):
+    extra_ids   = COL.get("extra_ids", [])
+    json_sets   = COL["json_sets"]
+    primary_id  = COL["primary_id"]
+    dt_col      = COL["datetime"]
 
-
-@app.route("/config")
-def get_config():
-    return jsonify(load_config())
-
-
-@app.route("/query", methods=["POST"])
-def query():
-    body = request.json
-    cfg = load_config()
-    col = cfg["columns"]
-    table = cfg["table_name"]
-
-    # Build SELECT column list from config only — never hardcode
-    select_cols = [col["primary_id"], col["datetime"]]
-    select_cols += col.get("extra_ids", [])
-    for s in col["json_sets"]:
+    select_cols = [primary_id, dt_col] + extra_ids
+    for s in json_sets:
         for side in (s["left"], s["right"]):
             if side not in select_cols:
                 select_cols.append(side)
 
     col_list = ", ".join(select_cols)
-
-    dt_col = col["datetime"]
     sql = (
-        f"SELECT {col_list} FROM {table} "
+        f"SELECT {col_list} FROM {CFG['table_name']} "
         f"WHERE {dt_col} >= TO_TIMESTAMP(:date_from, 'YYYY-MM-DD HH24:MI:SS') "
         f"AND   {dt_col} <= TO_TIMESTAMP(:date_to,   'YYYY-MM-DD HH24:MI:SS') "
         f"ORDER BY {dt_col}"
     )
 
-    try:
-        conn = get_connection(
-            body["host"], body["port"], body["service"],
-            body["username"], body["password"]
-        )
-        cursor = conn.cursor()
-        cursor.execute(sql, date_from=body["date_from"], date_to=body["date_to"])
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    conn   = get_connection(host, port, service, username, password)
+    cursor = conn.cursor()
+    cursor.execute(sql, date_from=date_from, date_to=date_to)
+    rows   = cursor.fetchall()
+    cursor.close()
+    conn.close()
 
     results = []
     for row in rows:
         row_map = {c: row[i] for i, c in enumerate(select_cols)}
-
-        record = {
-            "id":       str(row_map.get(col["primary_id"], "")),
-            "dat_time": str(row_map.get(col["datetime"], "")),
-            "extra":    {k: str(row_map.get(k, "") or "") for k in col.get("extra_ids", [])},
-            "sets":     []
+        record  = {
+            "id":       str(row_map.get(primary_id, "")),
+            "dat_time": str(row_map.get(dt_col, "")),
+            "extra":    {k: str(row_map.get(k, "") or "") for k in extra_ids},
+            "sets":     [],
         }
-
-        for s in col["json_sets"]:
+        for s in json_sets:
             left  = parse_json(row_map.get(s["left"]))
             right = parse_json(row_map.get(s["right"]))
-            if left is not None and right is not None:
-                diffs = deep_diff(left, right)
-            else:
-                diffs = []
+            diffs = deep_diff(left, right) if left is not None and right is not None else []
             record["sets"].append({
-                "label":    s["label"],
-                "left_col": s["left"],
+                "label":     s["label"],
+                "left_col":  s["left"],
                 "right_col": s["right"],
-                "diffs":    diffs,
-                "has_diff": len(diffs) > 0
+                "diffs":     diffs,
+                "has_diff":  len(diffs) > 0,
             })
-
         results.append(record)
 
-    return jsonify({"status": "ok", "data": results, "count": len(results)})
+    return results
 
+# ---------------------------------------------------------------------------
+# Excel export
+# ---------------------------------------------------------------------------
 
-@app.route("/export", methods=["POST"])
-def export():
-    body = request.json
-    results = body["results"]
-    cfg = load_config()
-    extra_id_cols = cfg["columns"].get("extra_ids", [])
-
+def build_excel(results):
+    extra_ids = COL.get("extra_ids", [])
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "JSON Diff"
 
-    hdr_fill    = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-    hdr_font    = Font(color="FFFFFF", bold=True)
-    add_fill    = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    rem_fill    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    chg_fill    = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    hdr_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    hdr_font = Font(color="FFFFFF", bold=True)
+    fills    = {
+        "added":   PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"),
+        "removed": PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"),
+        "changed": PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid"),
+    }
 
-    base_headers = [cfg["columns"]["primary_id"]] + extra_id_cols + [cfg["columns"]["datetime"]]
+    base_headers = [COL["primary_id"]] + extra_ids + [COL["datetime"]]
     headers = base_headers + ["Comparison Set", "Left Column", "Right Column",
                                "Path", "Difference Type", "Old Value", "New Value"]
     ws.append(headers)
@@ -187,154 +157,160 @@ def export():
         cell.fill = hdr_fill
         cell.font = hdr_font
 
-    type_fill = {"added": add_fill, "removed": rem_fill, "changed": chg_fill}
-
     for rec in results:
-        base_vals = [rec["id"]] + [rec["extra"].get(k, "") for k in extra_id_cols] + [rec["dat_time"]]
+        base = [rec["id"]] + [rec["extra"].get(k, "") for k in extra_ids] + [rec["dat_time"]]
         for s in rec["sets"]:
             if not s["diffs"]:
-                ws.append(base_vals + [s["label"], s["left_col"], s["right_col"],
-                                        "(no differences)", "", "", ""])
-            for diff in s["diffs"]:
-                row_vals = base_vals + [s["label"], s["left_col"], s["right_col"],
-                                         diff["path"], diff["type"],
-                                         diff["old"], diff["new"]]
-                ws.append(row_vals)
-                fill = type_fill.get(diff["type"])
-                if fill:
+                ws.append(base + [s["label"], s["left_col"], s["right_col"],
+                                   "(no differences)", "", "", ""])
+            for d in s["diffs"]:
+                ws.append(base + [s["label"], s["left_col"], s["right_col"],
+                                   d["path"], d["type"], d["old"], d["new"]])
+                if d["type"] in fills:
                     for cell in ws[ws.max_row]:
-                        cell.fill = fill
+                        cell.fill = fills[d["type"]]
 
     for col_cells in ws.columns:
         width = max(len(str(c.value or "")) for c in col_cells)
         ws.column_dimensions[col_cells[0].column_letter].width = min(width + 4, 60)
 
-    out = io.BytesIO()
-    wb.save(out)
-    out.seek(0)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
 
-    fname = f"json_diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-    return send_file(out,
-                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                     as_attachment=True,
-                     download_name=fname)
+# ---------------------------------------------------------------------------
+# UI helpers
+# ---------------------------------------------------------------------------
 
+DIFF_COLORS = {"added": "#c6efce", "removed": "#ffc7ce", "changed": "#ffeb9c"}
+DIFF_TEXT   = {"added": "#276221", "removed": "#8b0000",  "changed": "#7d5800"}
 
-@app.route("/demo", methods=["GET"])
-def demo():
-    cfg = load_config()
-    col = cfg["columns"]
-    extra_ids = col.get("extra_ids", [])
+def diff_badge(dtype):
+    bg = DIFF_COLORS.get(dtype, "#eee")
+    fg = DIFF_TEXT.get(dtype, "#000")
+    return f'<span style="background:{bg};color:{fg};padding:1px 7px;border-radius:3px;font-size:.75rem;font-weight:700">{dtype.upper()}</span>'
 
-    sample_records = [
-        {
-            "id": "TXN-1001",
-            "dat_time": "2026-05-10 09:15:00",
-            "extra": {k: v for k, v in zip(extra_ids, ["C001", "ORD-55", "REG-AU"])},
-            "sets": [
-                {
-                    "label": "Set 1",
-                    "left_col": col["json_sets"][0]["left"],
-                    "right_col": col["json_sets"][0]["right"],
-                    "diffs": [
-                        {"path": "customer.name",    "old": "John Smith",  "new": "John A. Smith", "type": "changed"},
-                        {"path": "customer.email",   "old": "john@old.com","new": "john@new.com",  "type": "changed"},
-                        {"path": "order.total",      "old": "250.00",      "new": "275.50",        "type": "changed"},
-                        {"path": "order.discount",   "old": "",            "new": "10.00",         "type": "added"},
-                    ],
-                    "has_diff": True,
-                },
-                {
-                    "label": "Set 2",
-                    "left_col": col["json_sets"][1]["left"] if len(col["json_sets"]) > 1 else "Json3",
-                    "right_col": col["json_sets"][1]["right"] if len(col["json_sets"]) > 1 else "Json4",
-                    "diffs": [],
-                    "has_diff": False,
-                },
-            ],
-        },
-        {
-            "id": "TXN-1002",
-            "dat_time": "2026-05-10 10:30:22",
-            "extra": {k: v for k, v in zip(extra_ids, ["C002", "ORD-56", "REG-US"])},
-            "sets": [
-                {
-                    "label": "Set 1",
-                    "left_col": col["json_sets"][0]["left"],
-                    "right_col": col["json_sets"][0]["right"],
-                    "diffs": [],
-                    "has_diff": False,
-                },
-                {
-                    "label": "Set 2",
-                    "left_col": col["json_sets"][1]["left"] if len(col["json_sets"]) > 1 else "Json3",
-                    "right_col": col["json_sets"][1]["right"] if len(col["json_sets"]) > 1 else "Json4",
-                    "diffs": [
-                        {"path": "shipping.address.street", "old": "12 Main St",   "new": "99 Oak Ave",    "type": "changed"},
-                        {"path": "shipping.address.city",   "old": "Springfield",  "new": "Shelbyville",   "type": "changed"},
-                        {"path": "shipping.method",         "old": "standard",     "new": "express",       "type": "changed"},
-                        {"path": "shipping.tracking",       "old": "TRK-OLD-999",  "new": "",              "type": "removed"},
-                        {"path": "shipping.insurance",      "old": "",             "new": "true",          "type": "added"},
-                    ],
-                    "has_diff": True,
-                },
-            ],
-        },
-        {
-            "id": "TXN-1003",
-            "dat_time": "2026-05-10 11:05:47",
-            "extra": {k: v for k, v in zip(extra_ids, ["C003", "ORD-57", "REG-UK"])},
-            "sets": [
-                {
-                    "label": "Set 1",
-                    "left_col": col["json_sets"][0]["left"],
-                    "right_col": col["json_sets"][0]["right"],
-                    "diffs": [
-                        {"path": "items[0].qty",      "old": "2",       "new": "5",       "type": "changed"},
-                        {"path": "items[0].price",    "old": "19.99",   "new": "17.99",   "type": "changed"},
-                        {"path": "items[1].sku",      "old": "SKU-AAA", "new": "",        "type": "removed"},
-                        {"path": "items[2]",          "old": "",        "new": "{\"sku\":\"SKU-ZZZ\",\"qty\":1}", "type": "added"},
-                        {"path": "payment.method",    "old": "card",    "new": "wallet",  "type": "changed"},
-                    ],
-                    "has_diff": True,
-                },
-                {
-                    "label": "Set 2",
-                    "left_col": col["json_sets"][1]["left"] if len(col["json_sets"]) > 1 else "Json3",
-                    "right_col": col["json_sets"][1]["right"] if len(col["json_sets"]) > 1 else "Json4",
-                    "diffs": [
-                        {"path": "status",            "old": "pending", "new": "confirmed", "type": "changed"},
-                        {"path": "approvedBy",        "old": "",        "new": "mgr_jane",  "type": "added"},
-                    ],
-                    "has_diff": True,
-                },
-            ],
-        },
-        {
-            "id": "TXN-1004",
-            "dat_time": "2026-05-10 14:22:10",
-            "extra": {k: v for k, v in zip(extra_ids, ["C004", "ORD-58", "REG-SG"])},
-            "sets": [
-                {
-                    "label": "Set 1",
-                    "left_col": col["json_sets"][0]["left"],
-                    "right_col": col["json_sets"][0]["right"],
-                    "diffs": [],
-                    "has_diff": False,
-                },
-                {
-                    "label": "Set 2",
-                    "left_col": col["json_sets"][1]["left"] if len(col["json_sets"]) > 1 else "Json3",
-                    "right_col": col["json_sets"][1]["right"] if len(col["json_sets"]) > 1 else "Json4",
-                    "diffs": [],
-                    "has_diff": False,
-                },
-            ],
-        },
-    ]
+def render_diffs(diffs):
+    for d in diffs:
+        bg = DIFF_COLORS.get(d["type"], "#fafafa")
+        border = {"added": "#4caf50", "removed": "#f44336", "changed": "#ff9800"}.get(d["type"], "#ccc")
+        old_html = f'<span style="background:#ffd7d7;padding:1px 6px;border-radius:3px;font-family:monospace;font-size:.8rem">{d["old"]}</span>' if d["old"] else ""
+        new_html = f'<span style="background:#d7ffd7;padding:1px 6px;border-radius:3px;font-family:monospace;font-size:.8rem">{d["new"]}</span>' if d["new"] else ""
+        arrow    = " &rarr; " if old_html and new_html else ""
+        st.markdown(
+            f'<div style="background:{bg};border-left:3px solid {border};padding:6px 10px;'
+            f'border-radius:4px;margin-bottom:4px">'
+            f'{diff_badge(d["type"])} &nbsp;<code style="font-size:.8rem">{d["path"]}</code><br/>'
+            f'<div style="margin-top:4px">{old_html}{arrow}{new_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
-    return jsonify({"status": "ok", "data": sample_records, "count": len(sample_records)})
+# ---------------------------------------------------------------------------
+# Main app
+# ---------------------------------------------------------------------------
 
+st.title("JSON Comparison Tool")
 
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+# ── Sidebar ────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.header("DB Connection")
+    host     = st.text_input("Host", placeholder="db.host.com")
+    port     = st.text_input("Port", value="1521")
+    service  = st.text_input("Service Name / SID", placeholder="ORCL")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    st.divider()
+    st.header("Date & Time Range")
+    col1, col2 = st.columns(2)
+    with col1:
+        from_date = st.date_input("From date", value=date.today())
+        from_time = st.time_input("From time", value=time(0, 0, 0))
+    with col2:
+        to_date = st.date_input("To date", value=date.today())
+        to_time = st.time_input("To time", value=time(23, 59, 59))
+
+    run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
+
+# ── Run query ──────────────────────────────────────────────────────────────
+if run_btn:
+    if not all([host, service, username, password]):
+        st.error("Please fill in all DB connection fields.")
+    else:
+        date_from = datetime.combine(from_date, from_time).strftime("%Y-%m-%d %H:%M:%S")
+        date_to   = datetime.combine(to_date,   to_time).strftime("%Y-%m-%d %H:%M:%S")
+        with st.spinner("Querying Oracle DB..."):
+            try:
+                st.session_state["results"]    = run_query(host, port, service, username, password, date_from, date_to)
+                st.session_state["query_range"] = f"{date_from}  →  {date_to}"
+            except Exception as e:
+                st.error(f"Query failed: {e}")
+                st.session_state.pop("results", None)
+
+# ── Results ────────────────────────────────────────────────────────────────
+if "results" in st.session_state:
+    results = st.session_state["results"]
+
+    total     = len(results)
+    diff_count = sum(1 for r in results if any(s["has_diff"] for s in r["sets"]))
+
+    st.caption(f"Range: {st.session_state.get('query_range', '')}")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Records", total)
+    m2.metric("Records with Differences", diff_count)
+    m3.metric("Identical Records", total - diff_count)
+
+    # Filter
+    q = st.text_input("Filter by ID, path, or value", placeholder="Search...")
+    if q:
+        ql = q.lower()
+        results = [
+            r for r in results
+            if ql in r["id"].lower()
+            or ql in r["dat_time"].lower()
+            or any(ql in v.lower() for v in r["extra"].values())
+            or any(
+                ql in d["path"].lower() or ql in d["old"].lower() or ql in d["new"].lower()
+                for s in r["sets"] for d in s["diffs"]
+            )
+        ]
+        st.caption(f"{len(results)} matching records")
+
+    st.divider()
+
+    extra_ids = COL.get("extra_ids", [])
+
+    for rec in results:
+        has_any_diff = any(s["has_diff"] for s in rec["sets"])
+        label_color  = "#8b0000" if has_any_diff else "#276221"
+        diff_label   = f"{'⚠ Differences found' if has_any_diff else '✓ Identical'}"
+
+        with st.expander(
+            f"**{COL['primary_id']}: {rec['id']}** &nbsp;|&nbsp; {rec['dat_time']}"
+            + (f"  —  " + "  |  ".join(f"{k}: {rec['extra'][k]}" for k in extra_ids if rec['extra'].get(k)) if extra_ids else ""),
+            expanded=has_any_diff,
+        ):
+            for s in rec["sets"]:
+                st.markdown(
+                    f"**{s['label']}** &nbsp; `{s['left_col']}` vs `{s['right_col']}`",
+                    unsafe_allow_html=True,
+                )
+                if not s["has_diff"]:
+                    st.success("No differences")
+                else:
+                    render_diffs(s["diffs"])
+                st.markdown("---")
+
+    # Excel export
+    st.divider()
+    if st.button("Generate Excel Report"):
+        excel_buf = build_excel(st.session_state["results"])
+        fname = f"json_diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        st.download_button(
+            label="Download Excel",
+            data=excel_buf,
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
