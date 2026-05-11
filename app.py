@@ -80,11 +80,15 @@ def parse_json(val):
 # Query
 # ---------------------------------------------------------------------------
 
-def run_query(host, port, service, username, password, date_from, date_to):
+def run_query(host, port, service, username, password, date_from, date_to, id1_val=None, id2_val=None):
     extra_ids   = COL.get("extra_ids", [])
     json_sets   = COL["json_sets"]
     primary_id  = COL["primary_id"]
     dt_col      = COL["datetime"]
+
+    # Resolve which columns id1/id2 filters map to (positions 0 and 1 of extra_ids)
+    id1_col = extra_ids[0] if len(extra_ids) > 0 else None
+    id2_col = extra_ids[1] if len(extra_ids) > 1 else None
 
     select_cols = [primary_id, dt_col] + extra_ids
     for s in json_sets:
@@ -92,17 +96,26 @@ def run_query(host, port, service, username, password, date_from, date_to):
             if side not in select_cols:
                 select_cols.append(side)
 
-    col_list = ", ".join(select_cols)
-    sql = (
-        f"SELECT {col_list} FROM {CFG['table_name']} "
-        f"WHERE {dt_col} >= TO_TIMESTAMP(:date_from, 'YYYY-MM-DD HH24:MI:SS') "
-        f"AND   {dt_col} <= TO_TIMESTAMP(:date_to,   'YYYY-MM-DD HH24:MI:SS') "
-        f"ORDER BY {dt_col}"
+    col_list  = ", ".join(select_cols)
+    where     = (
+        f"{dt_col} >= TO_TIMESTAMP(:date_from, 'YYYY-MM-DD HH24:MI:SS') "
+        f"AND {dt_col} <= TO_TIMESTAMP(:date_to, 'YYYY-MM-DD HH24:MI:SS')"
     )
+    bind_vars = {"date_from": date_from, "date_to": date_to}
+
+    if id1_val and id1_col:
+        where += f" AND {id1_col} = :id1_val"
+        bind_vars["id1_val"] = id1_val
+
+    if id2_val and id2_col:
+        where += f" AND {id2_col} = :id2_val"
+        bind_vars["id2_val"] = id2_val
+
+    sql  = f"SELECT {col_list} FROM {CFG['table_name']} WHERE {where} ORDER BY {dt_col}"
 
     conn   = get_connection(host, port, service, username, password)
     cursor = conn.cursor()
-    cursor.execute(sql, date_from=date_from, date_to=date_to)
+    cursor.execute(sql, bind_vars)
     rows   = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -232,6 +245,14 @@ with st.sidebar:
         to_date = st.date_input("To date", value=date.today())
         to_time = st.time_input("To time", value=time(23, 59, 59))
 
+    st.divider()
+    _extra = COL.get("extra_ids", [])
+    st.header("Filter by ID (optional)")
+    id1_label = _extra[0] if len(_extra) > 0 else "ID1"
+    id2_label = _extra[1] if len(_extra) > 1 else "ID2"
+    id1_val = st.text_input(id1_label, placeholder=f"Leave blank to fetch all")
+    id2_val = st.text_input(id2_label, placeholder=f"Leave blank to fetch all")
+
     run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
 
 # ── Run query ──────────────────────────────────────────────────────────────
@@ -243,8 +264,19 @@ if run_btn:
         date_to   = datetime.combine(to_date,   to_time).strftime("%Y-%m-%d %H:%M:%S")
         with st.spinner("Querying Oracle DB..."):
             try:
-                st.session_state["results"]    = run_query(host, port, service, username, password, date_from, date_to)
-                st.session_state["query_range"] = f"{date_from}  →  {date_to}"
+                st.session_state["results"] = run_query(
+                    host, port, service, username, password,
+                    date_from, date_to,
+                    id1_val=id1_val.strip() or None,
+                    id2_val=id2_val.strip() or None,
+                )
+                filters = []
+                if id1_val.strip(): filters.append(f"{id1_label}={id1_val.strip()}")
+                if id2_val.strip(): filters.append(f"{id2_label}={id2_val.strip()}")
+                st.session_state["query_range"] = (
+                    f"{date_from}  →  {date_to}"
+                    + (f"  |  {', '.join(filters)}" if filters else "")
+                )
             except Exception as e:
                 st.error(f"Query failed: {e}")
                 st.session_state.pop("results", None)
