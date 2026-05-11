@@ -25,7 +25,18 @@ COL = CFG["columns"]
 
 def get_connection(host, port, service, username, password):
     dsn = oracledb.makedsn(host, int(port), service_name=service)
-    return oracledb.connect(user=username, password=password, dsn=dsn)
+    try:
+        conn = oracledb.connect(user=username, password=password, dsn=dsn)
+        return conn
+    except oracledb.DatabaseError as e:
+        error, = e.args
+        raise ConnectionError(
+            f"Oracle connection failed.\n"
+            f"  Host:    {host}:{port}\n"
+            f"  Service: {service}\n"
+            f"  User:    {username}\n"
+            f"  Detail:  {error.message}"
+        )
 
 # ---------------------------------------------------------------------------
 # JSON diff engine
@@ -253,7 +264,23 @@ with st.sidebar:
     id1_val = st.text_input(id1_label, placeholder=f"Leave blank to fetch all")
     id2_val = st.text_input(id2_label, placeholder=f"Leave blank to fetch all")
 
-    run_btn = st.button("Run Comparison", type="primary", use_container_width=True)
+    test_btn = st.button("Test Connection", use_container_width=True)
+    run_btn  = st.button("Run Comparison", type="primary", use_container_width=True)
+
+# ── Test connection ────────────────────────────────────────────────────────
+if test_btn:
+    if not all([host, service, username, password]):
+        st.error("Please fill in all DB connection fields.")
+    else:
+        with st.spinner("Connecting..."):
+            try:
+                conn = get_connection(host, port, service, username, password)
+                conn.close()
+                st.success(f"Connected successfully to **{service}** on **{host}:{port}**")
+            except ConnectionError as e:
+                st.error(str(e))
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
 
 # ── Run query ──────────────────────────────────────────────────────────────
 if run_btn:
