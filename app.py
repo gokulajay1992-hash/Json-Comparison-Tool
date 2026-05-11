@@ -91,13 +91,12 @@ def parse_json(val):
 # Query
 # ---------------------------------------------------------------------------
 
-def run_query(host, port, service, username, password, date_from, date_to, id1_val=None, id2_val=None):
+def run_query(host, port, service, username, password, date_from, date_to, primary_id_val=None, id1_val=None, id2_val=None):
     extra_ids   = COL.get("extra_ids", [])
     json_sets   = COL["json_sets"]
     primary_id  = COL["primary_id"]
     dt_col      = COL["datetime"]
 
-    # Resolve which columns id1/id2 filters map to (positions 0 and 1 of extra_ids)
     id1_col = extra_ids[0] if len(extra_ids) > 0 else None
     id2_col = extra_ids[1] if len(extra_ids) > 1 else None
 
@@ -113,6 +112,10 @@ def run_query(host, port, service, username, password, date_from, date_to, id1_v
         "date_from": datetime.strptime(date_from, "%Y-%m-%d %H:%M:%S"),
         "date_to":   datetime.strptime(date_to,   "%Y-%m-%d %H:%M:%S"),
     }
+
+    if primary_id_val:
+        where += f" AND {primary_id} = :primary_id_val"
+        bind_vars["primary_id_val"] = primary_id_val
 
     if id1_val and id1_col:
         where += f" AND {id1_col} = :id1_val"
@@ -265,10 +268,12 @@ with st.sidebar:
     st.divider()
     _extra = COL.get("extra_ids", [])
     st.header("Filter by ID (optional)")
+    primary_id_label = COL.get("primary_id", "ID")
     id1_label = _extra[0] if len(_extra) > 0 else "ID1"
     id2_label = _extra[1] if len(_extra) > 1 else "ID2"
-    id1_val = st.text_input(id1_label, placeholder=f"Leave blank to fetch all")
-    id2_val = st.text_input(id2_label, placeholder=f"Leave blank to fetch all")
+    primary_id_val = st.text_input(primary_id_label, placeholder="Leave blank to fetch all")
+    id1_val = st.text_input(id1_label, placeholder="Leave blank to fetch all")
+    id2_val = st.text_input(id2_label, placeholder="Leave blank to fetch all")
 
     test_btn = st.button("Test Connection", use_container_width=True)
     run_btn  = st.button("Run Comparison", type="primary", use_container_width=True)
@@ -300,10 +305,12 @@ if run_btn:
                 st.session_state["results"] = run_query(
                     host, port, service, username, password,
                     date_from, date_to,
+                    primary_id_val=primary_id_val.strip() or None,
                     id1_val=id1_val.strip() or None,
                     id2_val=id2_val.strip() or None,
                 )
                 filters = []
+                if primary_id_val.strip(): filters.append(f"{primary_id_label}={primary_id_val.strip()}")
                 if id1_val.strip(): filters.append(f"{id1_label}={id1_val.strip()}")
                 if id2_val.strip(): filters.append(f"{id2_label}={id2_val.strip()}")
                 st.session_state["query_range"] = (
