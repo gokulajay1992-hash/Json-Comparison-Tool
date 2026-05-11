@@ -108,11 +108,11 @@ def run_query(host, port, service, username, password, date_from, date_to, id1_v
                 select_cols.append(side)
 
     col_list  = ", ".join(select_cols)
-    where     = (
-        f"{dt_col} >= TO_TIMESTAMP(:date_from, 'YYYY-MM-DD HH24:MI:SS') "
-        f"AND {dt_col} <= TO_TIMESTAMP(:date_to, 'YYYY-MM-DD HH24:MI:SS')"
-    )
-    bind_vars = {"date_from": date_from, "date_to": date_to}
+    where     = f"{dt_col} >= :date_from AND {dt_col} <= :date_to"
+    bind_vars = {
+        "date_from": datetime.strptime(date_from, "%Y-%m-%d %H:%M:%S"),
+        "date_to":   datetime.strptime(date_to,   "%Y-%m-%d %H:%M:%S"),
+    }
 
     if id1_val and id1_col:
         where += f" AND {id1_col} = :id1_val"
@@ -124,7 +124,13 @@ def run_query(host, port, service, username, password, date_from, date_to, id1_v
 
     sql  = f"SELECT {col_list} FROM {CFG['table_name']} WHERE {where} ORDER BY {dt_col}"
 
-    conn   = get_connection(host, port, service, username, password)
+    conn = get_connection(host, port, service, username, password)
+
+    def clob_to_str(cursor, name, default_type, size, precision, scale):
+        if default_type in (oracledb.DB_TYPE_CLOB, oracledb.DB_TYPE_NCLOB):
+            return cursor.var(oracledb.DB_TYPE_LONG, arraysize=cursor.arraysize)
+
+    conn.outputtypehandler = clob_to_str
     cursor = conn.cursor()
     cursor.execute(sql, bind_vars)
     rows   = cursor.fetchall()
