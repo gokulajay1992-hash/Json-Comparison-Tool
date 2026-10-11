@@ -18,6 +18,7 @@ def load_config():
 
 CFG = load_config()
 COL = CFG["columns"]
+EXCLUDE_FIELDS = set(CFG.get("exclude_fields", []))
 
 # ---------------------------------------------------------------------------
 # Oracle
@@ -49,20 +50,22 @@ def _fmt(val):
         return json.dumps(val)
     return str(val)
 
-def deep_diff(a, b, path=""):
+def deep_diff(a, b, path="", exclude=EXCLUDE_FIELDS):
     diffs = []
     if type(a) != type(b):
         diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
         return diffs
     if isinstance(a, dict):
         for key in set(a) | set(b):
+            if key in exclude:
+                continue
             p = f"{path}.{key}" if path else key
             if key not in a:
                 diffs.append({"path": p, "old": "", "new": _fmt(b[key]), "type": "added"})
             elif key not in b:
                 diffs.append({"path": p, "old": _fmt(a[key]), "new": "", "type": "removed"})
             else:
-                diffs.extend(deep_diff(a[key], b[key], p))
+                diffs.extend(deep_diff(a[key], b[key], p, exclude))
     elif isinstance(a, list):
         for i in range(max(len(a), len(b))):
             p = f"{path}[{i}]"
@@ -71,7 +74,7 @@ def deep_diff(a, b, path=""):
             elif i >= len(b):
                 diffs.append({"path": p, "old": _fmt(a[i]), "new": "", "type": "removed"})
             else:
-                diffs.extend(deep_diff(a[i], b[i], p))
+                diffs.extend(deep_diff(a[i], b[i], p, exclude))
     else:
         if a != b:
             diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
