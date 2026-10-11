@@ -336,6 +336,7 @@ if run_btn:
                     id1_val=id1_val.strip() or None,
                     id2_val=id2_val.strip() or None,
                 )
+                st.session_state["excel_buf"] = build_excel(st.session_state["results"])
                 filters = []
                 if primary_id_val.strip(): filters.append(f"{primary_id_label}={primary_id_val.strip()}")
                 if id1_val.strip(): filters.append(f"{id1_label}={id1_val.strip()}")
@@ -356,10 +357,20 @@ if "results" in st.session_state:
     diff_count = sum(1 for r in results if any(s["has_diff"] for s in r["sets"]))
 
     st.caption(f"Range: {st.session_state.get('query_range', '')}")
-    m1, m2, m3 = st.columns(3)
+
+    m1, m2, m3, m4 = st.columns([1, 1, 1, 1])
     m1.metric("Total Records", total)
     m2.metric("Records with Differences", diff_count)
     m3.metric("Identical Records", total - diff_count)
+    with m4:
+        fname = f"json_diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        m4.download_button(
+            label="Export to Excel",
+            data=st.session_state["excel_buf"],
+            file_name=fname,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     # Filter
     q = st.text_input("Filter by ID, path, or value", placeholder="Search...")
@@ -402,14 +413,3 @@ if "results" in st.session_state:
                     render_diffs(s["diffs"])
                 st.markdown("---")
 
-    # Excel export
-    st.divider()
-    if st.button("Generate Excel Report"):
-        excel_buf = build_excel(st.session_state["results"])
-        fname = f"json_diff_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        st.download_button(
-            label="Download Excel",
-            data=excel_buf,
-            file_name=fname,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
