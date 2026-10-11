@@ -50,22 +50,41 @@ def _fmt(val):
         return json.dumps(val)
     return str(val)
 
-def deep_diff(a, b, path="", exclude=EXCLUDE_FIELDS):
+def _is_empty(obj):
+    if isinstance(obj, (dict, list)):
+        return len(obj) == 0
+    return False
+
+def strip_excluded(obj, exclude=EXCLUDE_FIELDS):
+    """Recursively remove excluded fields and any empty dicts/lists they leave behind."""
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            if k in exclude:
+                continue
+            cleaned = strip_excluded(v, exclude)
+            if not _is_empty(cleaned):
+                result[k] = cleaned
+        return result
+    elif isinstance(obj, list):
+        cleaned = [strip_excluded(item, exclude) for item in obj]
+        return [item for item in cleaned if not _is_empty(item)]
+    return obj
+
+def deep_diff(a, b, path=""):
     diffs = []
     if type(a) != type(b):
         diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
         return diffs
     if isinstance(a, dict):
         for key in set(a) | set(b):
-            if key in exclude:
-                continue
             p = f"{path}.{key}" if path else key
             if key not in a:
                 diffs.append({"path": p, "old": "", "new": _fmt(b[key]), "type": "added"})
             elif key not in b:
                 diffs.append({"path": p, "old": _fmt(a[key]), "new": "", "type": "removed"})
             else:
-                diffs.extend(deep_diff(a[key], b[key], p, exclude))
+                diffs.extend(deep_diff(a[key], b[key], p))
     elif isinstance(a, list):
         for i in range(max(len(a), len(b))):
             p = f"{path}[{i}]"
@@ -74,7 +93,7 @@ def deep_diff(a, b, path="", exclude=EXCLUDE_FIELDS):
             elif i >= len(b):
                 diffs.append({"path": p, "old": _fmt(a[i]), "new": "", "type": "removed"})
             else:
-                diffs.extend(deep_diff(a[i], b[i], p, exclude))
+                diffs.extend(deep_diff(a[i], b[i], p))
     else:
         if a != b:
             diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
@@ -155,7 +174,10 @@ def run_query(host, port, service, username, password, date_from, date_to, prima
         for s in json_sets:
             left  = parse_json(row_map.get(s["left"]))
             right = parse_json(row_map.get(s["right"]))
-            diffs = deep_diff(left, right) if left is not None and right is not None else []
+            if left is not None and right is not None:
+                diffs = deep_diff(strip_excluded(left), strip_excluded(right))
+            else:
+                diffs = []
             record["sets"].append({
                 "label":     s["label"],
                 "left_col":  s["left"],
