@@ -6,8 +6,8 @@
     "datetime": "DatTime",
     "extra_ids": ["id1", "id2", "id3"],
     "json_sets": [
-      { "label": "Set 1", "left": "Json1", "right": "Json2" },
-      { "label": "Set 2", "left": "Json3", "right": "Json4" }
+      { "label": "Set 1", "left": "Json1", "left_label": "Base 1", "right": "Json2", "right_label": "Base 2" },
+      { "label": "Set 2", "left": "Json3", "left_label": "Base 3", "right": "Json4", "right_label": "Base 4" }
     ]
   }
 }

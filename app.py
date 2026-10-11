@@ -182,6 +182,8 @@ def run_query(host, port, service, username, password, date_from, date_to, prima
                 "label":     s["label"],
                 "left_col":  s["left"],
                 "right_col": s["right"],
+                "left_label":  s.get("left_label", s["left"]),
+                "right_label": s.get("right_label", s["right"]),
                 "diffs":     diffs,
                 "has_diff":  len(diffs) > 0,
             })
@@ -219,10 +221,10 @@ def build_excel(results):
         base = [rec["id"]] + [rec["extra"].get(k, "") for k in extra_ids] + [rec["dat_time"]]
         for s in rec["sets"]:
             if not s["diffs"]:
-                ws.append(base + [s["label"], s["left_col"], s["right_col"],
+                ws.append(base + [s["label"], s["left_label"], s["right_label"],
                                    "(no differences)", "", "", ""])
             for d in s["diffs"]:
-                ws.append(base + [s["label"], s["left_col"], s["right_col"],
+                ws.append(base + [s["label"], s["left_label"], s["right_label"],
                                    d["path"], d["type"], d["old"], d["new"]])
                 if d["type"] in fills:
                     for cell in ws[ws.max_row]:
@@ -391,7 +393,7 @@ if "results" in st.session_state:
         ):
             for s in rec["sets"]:
                 st.markdown(
-                    f"**{s['label']}** &nbsp; `{s['left_col']}` vs `{s['right_col']}`",
+                    f"**{s['label']}** &nbsp; `{s['left_label']}` vs `{s['right_label']}`",
                     unsafe_allow_html=True,
                 )
                 if not s["has_diff"]:
