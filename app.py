@@ -175,12 +175,13 @@ def run_query(host, port, service, username, password, date_from, date_to, prima
             left  = parse_json(row_map.get(s["left"]))
             right = parse_json(row_map.get(s["right"]))
             if left is not None and right is not None:
-                lw = s.get("left_unwrap", "")
-                rw = s.get("right_unwrap", "")
-                if lw and isinstance(left, dict) and lw in left:
-                    left = left[lw]
-                if rw and isinstance(right, dict) and rw in right:
-                    right = right[rw]
+                # Auto-detect which side has the wrapper and unwrap it
+                unwrap_keys = [k for k in [s.get("left_unwrap",""), s.get("right_unwrap","")] if k]
+                for uw in unwrap_keys:
+                    if isinstance(left, dict) and uw in left:
+                        left = left[uw]
+                    if isinstance(right, dict) and uw in right:
+                        right = right[uw]
                 diffs = deep_diff(strip_excluded(left), strip_excluded(right))
             else:
                 diffs = []
