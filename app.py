@@ -19,6 +19,7 @@ def load_config():
 CFG = load_config()
 COL = CFG["columns"]
 EXCLUDE_FIELDS = set(CFG.get("exclude_fields", []))
+UNWRAP_KEYS    = CFG.get("unwrap_keys", [])
 
 # ---------------------------------------------------------------------------
 # Oracle
@@ -175,9 +176,7 @@ def run_query(host, port, service, username, password, date_from, date_to, prima
             left  = parse_json(row_map.get(s["left"]))
             right = parse_json(row_map.get(s["right"]))
             if left is not None and right is not None:
-                # Auto-detect which side has the wrapper and unwrap it
-                unwrap_keys = [k for k in [s.get("left_unwrap",""), s.get("right_unwrap","")] if k]
-                for uw in unwrap_keys:
+                for uw in UNWRAP_KEYS:
                     if isinstance(left, dict) and uw in left:
                         left = left[uw]
                     if isinstance(right, dict) and uw in right:
