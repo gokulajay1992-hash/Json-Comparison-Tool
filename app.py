@@ -49,6 +49,8 @@ def _fmt(val):
         return ""
     if isinstance(val, (dict, list)):
         return json.dumps(val)
+    if isinstance(val, bool):
+        return "true" if val else "false"
     return str(val)
 
 def _is_empty(obj):
@@ -72,8 +74,28 @@ def strip_excluded(obj, exclude=EXCLUDE_FIELDS):
         return [item for item in cleaned if not _is_empty(item)]
     return obj
 
+def _normalize(val):
+    """Normalize scalar values for comparison:
+    - Strip whitespace from strings
+    - Treat boolean-string equivalents as equal (false == "false")
+    - Case-insensitive string comparison
+    """
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("true", "false"):
+            return v
+        return v
+    return val
+
 def deep_diff(a, b, path=""):
     diffs = []
+    # Normalize scalars for comparison but keep originals for display
+    if not isinstance(a, (dict, list)) and not isinstance(b, (dict, list)):
+        if _normalize(a) != _normalize(b):
+            diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
+        return diffs
     if type(a) != type(b):
         diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
         return diffs
@@ -96,7 +118,7 @@ def deep_diff(a, b, path=""):
             else:
                 diffs.extend(deep_diff(a[i], b[i], p))
     else:
-        if a != b:
+        if _normalize(a) != _normalize(b):
             diffs.append({"path": path or "root", "old": _fmt(a), "new": _fmt(b), "type": "changed"})
     return diffs
 
