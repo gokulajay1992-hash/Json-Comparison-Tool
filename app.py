@@ -76,14 +76,15 @@ def strip_excluded(obj, exclude=EXCLUDE_FIELDS):
 
 def _normalize(val):
     """Normalize scalar values for comparison:
-    - Strip whitespace from strings
+    - Collapse all internal whitespace (spaces, newlines, tabs) to single space
+    - Strip leading/trailing whitespace
     - Treat boolean-string equivalents as equal (false == "false")
     - Case-insensitive string comparison
     """
     if isinstance(val, bool):
         return str(val).lower()
     if isinstance(val, str):
-        v = val.strip().lower()
+        v = " ".join(val.split()).lower()
         if v in ("true", "false"):
             return v
         return v
